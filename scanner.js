@@ -1,29 +1,36 @@
-// GoicoSS - REPORTE FORENSE TOTAL V19 (Full Database)
+// // GoicoSS - REPORTE FORENSE TOTAL V19 (Híbrido Keller-Goico)
 // Autor: @goicofxp
 
 const SCANNER_NAME = "Goico";
 const SCANNER_VERSION = "SS";
 
-// --- BASE DE DATOS COMPLETA ---
-const VPS_HOSTING_KEYWORDS = ["hostinger", "hstgr", "locaweb", "kinghost", "umbler", "hostgator", "digitalocean", "linode", "vultr", "hetzner", "ovh", "contabo", "aws", "azure", "googlecloud", "choopa", "psychz", "m247", "path.net", "datacamp", "tzulo", "servermania", "multacom"];
+// --- BASE DE DATOS EXTENDIDA (KELLER + GOICO) ---
+const CHEAT_DOMAINS = [
+  "purplevioleto.com", "ggpolarbear.com", "ggwhitehawk.com", "proxy.builders", 
+  "authtool.app", "ipa-download", "isigncloud", "khoind", "anubisw.online", 
+  "baontq.xyz", "prreqcroab.icu", "1xlite", "apple-dns.net", "udid", "fatalitycheats.xyz"
+];
+
+const VPN_HOSTING_KEYWORDS = [
+  "vpn", "tunnel", "proxy", "1.1.1.1", "wireguard", "adguard", "shadowsocks", "hotspot",
+  "hostinger", "hstgr", "locaweb", "kinghost", "umbler", "hostgator", "digitalocean", 
+  "linode", "vultr", "hetzner", "ovh", "contabo", "aws", "azure", "googlecloud", 
+  "choopa", "psychz", "m247", "path.net", "datacamp", "tzulo", "servermania"
+];
 
 const CHEAT_APPS = {
-  "com.touchingapp.potatsolite": "PotatsoLite — proxy iOS",
-  "com.monite.proxyff": "ProxyFF — proxy iOS (Cheat)",
-  "com.shadowrocket.Shadowrocket": "Shadowrocket — proxy iOS",
-  "com.opa334.dopamine": "Dopamine — Jailbreak",
-  "com.opa334.TrollStore": "TrollStore — Sideload",
-  "com.esign.ios": "ESign — IPA Installer",
-  "com.iosgods.iosgods": "iOSGods — Cheat Store",
-  "com.tigisoftware.Filza": "Filza — Root File Manager",
-  "com.apple.Preferences.Developer": "Opciones de Desarrollador Activas"
+  "com.touchingapp.potatsolite": "PotatsoLite (Proxy)",
+  "com.monite.proxyff": "ProxyFF (Cheat)",
+  "com.shadowrocket.Shadowrocket": "Shadowrocket (Proxy)",
+  "com.opa334.dopamine": "Dopamine (Jailbreak)",
+  "com.opa334.TrollStore": "TrollStore (Sideload)",
+  "com.esign.ios": "ESign (IPA Installer)",
+  "com.iosgods.iosgods": "iOSGods App",
+  "com.tigisoftware.Filza": "Filza (Root Access)"
 };
 
-const CHEAT_DOMAINS = ["purplevioleto.com", "ggpolarbear.com", "ggwhitehawk.com", "anubisw.online", "baontq.xyz", "fatalitycheats.xyz", "proxy.builders", "authtool.app", "isigncloud", "1xlite"];
+const RDNS_PATTERNS = ["hstgr.cloud", "staticip", "srv.", "vps.", "dedicated.", "compute.internal"];
 
-const RDNS_PATTERNS = ["hstgr.cloud", "staticip", "srv.", "vps.", "dedicated."];
-
-// --- MOTOR LOGICO ---
 const Parser = {
   ndjson: (raw) => raw.split('\n').filter(l => l.trim()).map(l => { try { return JSON.parse(l); } catch(e) { return null; } }).filter(x => x),
   ips: (raw) => { try { return JSON.parse(raw); } catch(e) { return null; } }
@@ -32,92 +39,138 @@ const Parser = {
 function runAnalysis(netEntries, ipsData) {
   let appGroups = {};
   let appsInUsage = new Set(ipsData?.entries?.map(e => e.bundleId) || []);
+  let batteryApps = new Set(ipsData?.battery_usage?.map(b => b.bundleId) || []);
 
   netEntries.forEach(e => {
     if (!e.bundleID || !e.domain) return;
-    
-    let isVps = VPS_HOSTING_KEYWORDS.some(k => e.domain.toLowerCase().includes(k)) || RDNS_PATTERNS.some(p => e.domain.toLowerCase().includes(p));
-    let isCheatDom = CHEAT_DOMAINS.some(d => e.domain.toLowerCase().includes(d));
-    
+    let ts = typeof e.timeStamp === 'string' ? Date.parse(e.timeStamp) : e.timeStamp;
+    if (isNaN(ts)) ts = Date.now();
+
     if (!appGroups[e.bundleID]) {
+      let isVps = VPN_HOSTING_KEYWORDS.some(k => e.domain.toLowerCase().includes(k)) || RDNS_PATTERNS.some(p => e.domain.toLowerCase().includes(p));
+      
       appGroups[e.bundleID] = {
         bundleID: e.bundleID,
         domains: new Set(),
-        isCritical: !!CHEAT_APPS[e.bundleID] || isCheatDom,
-        isVpsRelay: isVps,
-        isGhost: !appsInUsage.has(e.bundleID) && !e.bundleID.includes("apple")
+        hits: 0,
+        lastSeen: ts,
+        isGhost: !appsInUsage.has(e.bundleID) && !e.bundleID.includes("apple"),
+        isVPN: isVps || VPN_HOSTING_KEYWORDS.some(k => e.bundleID.toLowerCase().includes(k)),
+        isCheat: CHEAT_DOMAINS.some(d => e.domain.toLowerCase().includes(d)) || !!CHEAT_APPS[e.bundleID],
+        isSpoofed: (e.bundleID.includes("spotify") || e.bundleID.includes("apple")) && (e.domain.includes("freefire") || CHEAT_DOMAINS.some(d => e.domain.includes(d)))
       };
     }
     appGroups[e.bundleID].domains.add(e.domain);
+    appGroups[e.bundleID].hits++;
+    if (ts > appGroups[e.bundleID].lastSeen) appGroups[e.bundleID].lastSeen = ts;
   });
 
+  let sortedApps = Object.values(appGroups).sort((a, b) => b.lastSeen - a.lastSeen);
+
   return {
-    critical: Object.values(appGroups).filter(a => a.isCritical),
-    vpsHits: Object.values(appGroups).filter(a => a.isVpsRelay),
-    ghosts: Object.values(appGroups).filter(a => a.isGhost),
-    ffSessions: ipsData?.entries?.filter(e => e.bundleId?.toLowerCase().includes("freefire")) || []
+    critical: sortedApps.filter(a => a.isCheat || a.isSpoofed || (a.bundleID === "com.spotify.client" && a.isGhost)),
+    suspects: sortedApps.filter(a => (a.isVPN || !a.bundleID.includes("apple")) && !a.isCheat && !a.isSpoofed && a.bundleID !== "com.dts.freefiremax"),
+    deletedRecently: Array.from(batteryApps).filter(id => !appsInUsage.has(id)),
+    ghosts: sortedApps.filter(a => a.isGhost && a.hits > 0),
+    ffSessions: ipsData?.entries?.filter(e => e.bundleId?.toLowerCase().includes("freefire")) || [],
+    appStore: ipsData?.entries?.find(e => e.bundleId === "com.apple.AppStore"),
+    reboots: ipsData?.reboot_history || []
   };
 }
 
-// --- INTERFAZ GRAFICA ---
+// --- TU INTERFAZ ORIGINAL (V16) ---
 function buildHTML(data) {
   return `
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { background:#0a0e14; color:#aab2bd; font-family: -apple-system; padding:20px; }
-  .header { text-align:center; margin-bottom: 30px; }
-  .title { font-size:32px; font-weight:900; color:#fff; letter-spacing:-1px; }
-  .title span { color:#00ffff; }
-  .stat-card { background:#11161d; border-radius:15px; padding:20px; text-align:center; border:1px solid #1e2530; margin-bottom:20px; }
-  .card { background:#11161d; border-radius:12px; padding:15px; margin-bottom:12px; border:1px solid #1e2530; position:relative; overflow:hidden; }
-  .crit { border-left: 4px solid #ff00cc; }
-  .vps { border-left: 4px solid #58a6ff; }
-  .ghost { border-left: 4px solid #ffaa00; }
-  .bundle { font-size:14px; color:#fff; font-weight:700; font-family:monospace; }
-  .tag { background:#1c2128; color:#00ffff; font-size:10px; padding:4px 8px; border-radius:5px; margin-top:8px; display:inline-block; border:1px solid #2d333b; }
-  .reason { color:#ff00cc; font-size:11px; margin-top:4px; font-weight:bold; }
-  .section-title { font-size:12px; font-weight:bold; color:#4a5568; text-transform:uppercase; margin:20px 0 10px 5px; }
+  body { background:#0a0e14; color:#aab2bd; font-family: -apple-system; padding:15px; margin:0; }
+  .header { text-align:center; margin-bottom:20px; }
+  .header h1 { color:#fff; font-size:26px; margin:0; font-weight:900; }
+  .header h1 span { color:#00ffff; }
+  .header p { font-size:9px; color:#4a5568; text-transform:uppercase; margin-top:5px; }
+
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+  .stat-box { background:#161b22; border-radius:8px; padding:12px; text-align:center; border:1px solid #21262d; }
+  .stat-box .val { display:block; font-size:20px; font-weight:bold; color:#fff; }
+  .stat-box .lab { font-size:8px; color:#8b949e; text-transform:uppercase; margin-top:4px; }
+
+  .card { background:#0d1117; border-radius:12px; padding:15px; margin-bottom:12px; border:1px solid #30363d; position:relative; }
+  .border-blue { border-left: 4px solid #00ffff; }
+  .border-green { border-left: 4px solid #4caf50; }
+  .border-red { border-left: 4px solid #ff4444; }
+  .border-crit { border-left: 4px solid #ff00cc; background: rgba(255, 0, 204, 0.02); }
+
+  .label-header { font-size:10px; font-weight:bold; margin-bottom:6px; text-transform:uppercase; }
+  .big-val { font-size:19px; color:#fff; font-weight:bold; }
+  .bundle { font-size:15px; color:#fff; font-weight:bold; margin:5px 0; word-break:break-all; }
+  .tag { background:#161b22; border-radius:5px; padding:2px 6px; font-size:10px; color:#58a6ff; border:1px solid #30363d; display:inline-block; margin:2px; }
+  .situa { background:rgba(255,255,255,0.03); padding:8px; border-radius:8px; margin:8px 0; font-size:12px; }
+  .badge-ghost { background:#ff00cc; color:#fff; padding:1px 5px; border-radius:4px; font-size:9px; float:right; }
 </style>
 </head>
 <body>
   <div class="header">
-    <div class="title">Goico<span>SS</span></div>
-    <div style="font-size:10px; color:#4a5568;">DATABASE V19 • FORENSIC ENGINE</div>
+    <h1>Goico<span>SS</span></h1>
+    <p>ANÁLISIS FORENSE — RAMOS MEJÍA — DATABASE V19</p>
   </div>
 
-  <div class="stat-card">
-    <div style="font-size:11px; color:#4a5568; text-transform:uppercase;">Registros Free Fire</div>
-    <div style="font-size:32px; color:#fff; font-weight:bold;">${data.ffSessions.length}</div>
+  <div class="stat-grid">
+    <div class="stat-box"><span class="val" style="color:#ff00cc;">${data.critical.length}</span><span class="lab">CRÍTICO</span></div>
+    <div class="stat-box"><span class="val" style="color:#ffbb00;">${data.suspects.length}</span><span class="lab">SUSPECT</span></div>
+    <div class="stat-box"><span class="val" style="color:#58a6ff;">${data.deletedRecently.length}</span><span class="lab">BORRADOS</span></div>
   </div>
 
-  ${data.critical.length > 0 ? '<div class="section-title">Hallazgos Críticos</div>' : ''}
-  ${data.critical.map(a => `
-    <div class="card crit">
+  <div class="card border-blue">
+    <div class="label-header" style="color:#00ffff;">🛒 APP STORE ABIERTA</div>
+    <div class="big-val">${data.appStore ? new Date(data.appStore.lastOpen || Date.now()).toLocaleString('es-AR') : 'SIN REGISTROS'}</div>
+  </div>
+
+  <div class="card border-green">
+    <div class="label-header" style="color:#4caf50;">🔥 FREE FIRE MAX — SESIONES</div>
+    <div class="big-val">${data.ffSessions.length} Inicializaciones</div>
+  </div>
+
+  <div class="card border-blue">
+    <div class="label-header" style="color:#00ffff;">🔄 REINICIOS DEL SISTEMA</div>
+    ${data.reboots.length > 0 ? data.reboots.slice(0, 2).map(r => `<div style="font-size:12px; color:#eee; margin-top:2px;">🔄 ${new Date(r).toLocaleString('es-AR')}</div>`).join('') : '<div style="font-size:12px;">✓ Sin reinicios</div>'}
+  </div>
+
+  <div class="card border-red">
+    <div class="label-header" style="color:#ff4444;">👻 APPS ELIMINADAS (BATERÍA)</div>
+    ${data.deletedRecently.length > 0 ? data.deletedRecently.map(id => `<div style="font-size:13px; color:#eee; margin-top:4px;">• ${id}</div>`).join('') : '<div style="font-size:12px; color:#8b949e;">✓ No se detectaron borrados en batería</div>'}
+  </div>
+
+  ${data.ghosts.length > 0 ? `
+  <div class="card border-red" style="background:rgba(255,0,204,0.03);">
+    <div class="label-header" style="color:#ff00cc;">🕵️ RESIDUOS DE BORRADO (GHOST)</div>
+    ${data.ghosts.slice(0, 5).map(g => `
+      <div style="border-bottom:1px solid #21262d; padding:8px 0;">
+        <div style="font-size:13px; color:#fff;">${g.bundleID} <span class="badge-ghost">SIN RASTRO EN IPS</span></div>
+        <div style="margin-top:4px;">${Array.from(g.domains).slice(0, 3).map(d => `<span class="tag">${d}</span>`).join('')}</div>
+      </div>
+    `).join('')}
+  </div>` : ''}
+
+  <div style="font-size:11px; font-weight:bold; color:#ff00cc; margin:10px 0 10px 5px; letter-spacing:1px;">[ APARTADO CRÍTICO - W.O ]</div>
+  ${data.critical.length > 0 ? data.critical.map(a => `
+    <div class="card border-crit">
       <div class="bundle">${a.bundleID}</div>
-      <div class="reason">${CHEAT_APPS[a.bundleID] || "Conexión a Servidor de Cheat"}</div>
-      ${Array.from(a.domains).map(d => `<div class="tag">${d}</div>`).join(' ')}
+      <div class="situa"><b>Status:</b> ${a.isSpoofed ? 'Inyección detectada (Spotify/Apple -> Dominio Cheat)' : (CHEAT_APPS[a.bundleID] ? 'App de Cheat Instalada' : 'Tráfico de Red Malicioso')}</div>
+      <div>${Array.from(a.domains).slice(0, 5).map(d => `<span class="tag">${d}</span>`).join('')}</div>
+      <div style="font-size:10px; color:#484f58; margin-top:8px;">Última conexión: ${new Date(a.lastSeen).toLocaleString('es-AR')}</div>
+    </div>
+  `).join('') : '<div style="text-align:center; font-size:12px; color:#4a5568; padding:10px;">Sin hallazgos críticos</div>'}
+
+  <div style="font-size:11px; font-weight:bold; color:#ffbb00; margin:20px 0 10px 5px; letter-spacing:1px;">[ APARTADO SOSPECHOSOS ]</div>
+  ${data.suspects.slice(0, 30).map(a => `
+    <div class="card" style="border-left:4px solid ${a.isVPN ? '#58a6ff' : '#ffbb00'};">
+      <div class="bundle">${a.bundleID}</div>
+      <div style="margin-top:5px;">${Array.from(a.domains).slice(0, 5).map(d => `<span class="tag">${d}</span>`).join('')}</div>
+      <div style="font-size:10px; color:#484f58; margin-top:8px;">Visto: ${new Date(a.lastSeen).toLocaleString('es-AR')} ${a.isVPN ? ' [HOSTING/VPN]' : ''}</div>
     </div>
   `).join('')}
-
-  ${data.vpsHits.length > 0 ? '<div class="section-title">Relays & Hosting (VPS)</div>' : ''}
-  ${data.vpsHits.map(a => `
-    <div class="card vps">
-      <div class="bundle">${a.bundleID}</div>
-      <div style="font-size:11px; color:#58a6ff; margin-top:4px;">Tráfico por Hosting/Proxy</div>
-      ${Array.from(a.domains).map(d => `<div class="tag">${d}</div>`).join(' ')}
-    </div>
-  `).join('')}
-
-  ${data.ghosts.length > 0 ? '<div class="section-title">Apps Fantasma (Sin Uso)</div>' : ''}
-  ${data.ghosts.map(a => `
-    <div class="card ghost">
-      <div class="bundle">${a.bundleID}</div>
-      <div style="font-size:11px; color:#ffaa00; margin-top:4px;">Actividad detectada sin rastro de apertura</div>
-    </div>
-  `).join('')}
-
 </body>
 </html>`;
 }
@@ -128,8 +181,9 @@ async function main() {
     let p2 = await DocumentPicker.openFile(); let i = Parser.ips(FileManager.iCloud().readString(p2));
     let analysis = runAnalysis(n, i);
     let wv = new WebView(); await wv.loadHTML(buildHTML(analysis)); await wv.present();
+    Speech.speak("Análisis finalizado.");
   } catch (e) {
-    let err = new Alert(); err.title = "Error"; err.message = "Carga los archivos NDJSON e IPS."; await err.present();
+    let err = new Alert(); err.title = "Error"; err.message = "Carga ambos archivos."; err.present();
   }
 }
 main();
